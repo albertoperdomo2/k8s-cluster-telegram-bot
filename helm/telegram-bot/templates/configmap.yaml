@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "telegram-bot.fullname" . }}-config
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "telegram-bot.labels" . | nindent 4 }}
+data:
+  log-level: {{ .Values.config.logLevel | quote }}
+  health-check-port: {{ .Values.health.port | quote }}
+  max-command-history: {{ .Values.config.maxCommandHistory | quote }}
+  default-log-lines: {{ .Values.config.defaultLogLines | quote }}
+  max-output-length: {{ .Values.config.maxOutputLength | quote }}
+  enable-all-namespaces: {{ .Values.config.enableAllNamespaces | quote }}
+  enable-exec-commands: {{ .Values.config.enableExecCommands | quote }}
+  enable-scaling: {{ .Values.config.enableScaling | quote }}

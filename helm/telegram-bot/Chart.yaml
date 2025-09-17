@@ -1,0 +1,13 @@
+apiVersion: v2
+name: telegram-bot
+description: A Helm chart for k8s-cluster-telegram-bot
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - telegram
+  - kubernetes
+  - bot
+home: https://github.com/albertoperdomo2/k8s-cluster-telegram-bot
+maintainers:
+  - name: Alberto Perdomo
+    email: albertoperdomogarcia@gmail.com

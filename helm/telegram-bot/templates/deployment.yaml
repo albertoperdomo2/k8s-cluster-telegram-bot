@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "telegram-bot.fullname" . }}
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "telegram-bot.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "telegram-bot.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "telegram-bot.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      securityContext:
+        runAsNonRoot: {{ .Values.security.runAsNonRoot }}
+        {{- if .Values.security.runAsUser }}
+        runAsUser: {{ .Values.security.runAsUser }}
+        {{- end }}
+        {{- if .Values.security.runAsGroup }}
+        runAsGroup: {{ .Values.security.runAsGroup }}
+        {{- end }}
+        {{- if .Values.security.fsGroup }}
+        fsGroup: {{ .Values.security.fsGroup }}
+        {{- end }}
+      containers:
+      - name: {{ .Chart.Name }}
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - containerPort: {{ .Values.health.port }}
+          name: health
+          protocol: TCP
+        env:
+        - name: BOT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "telegram-bot.fullname" . }}-secret
+              key: bot-token
+        - name: AUTHORIZED_USERS
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "telegram-bot.fullname" . }}-secret
+              key: authorized-users
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "telegram-bot.fullname" . }}-config
+              key: log-level
+        - name: HEALTH_CHECK_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "telegram-bot.fullname" . }}-config
+              key: health-check-port
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: {{ .Values.health.port }}
+          initialDelaySeconds: {{ .Values.health.livenessProbe.initialDelaySeconds }}
+          periodSeconds: {{ .Values.health.livenessProbe.periodSeconds }}
+          timeoutSeconds: {{ .Values.health.livenessProbe.timeoutSeconds }}
+          failureThreshold: {{ .Values.health.livenessProbe.failureThreshold }}
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: {{ .Values.health.port }}
+          initialDelaySeconds: {{ .Values.health.readinessProbe.initialDelaySeconds }}
+          periodSeconds: {{ .Values.health.readinessProbe.periodSeconds }}
+          timeoutSeconds: {{ .Values.health.readinessProbe.timeoutSeconds }}
+          failureThreshold: {{ .Values.health.readinessProbe.failureThreshold }}
+        securityContext:
+          {{- if .Values.security.allowPrivilegeEscalation }}
+          allowPrivilegeEscalation: {{ .Values.security.allowPrivilegeEscalation }}
+          {{- end }}
+          readOnlyRootFilesystem: {{ .Values.security.readOnlyRootFilesystem }}
+          runAsNonRoot: {{ .Values.security.runAsNonRoot }}
+          {{- if .Values.security.runAsUser }}
+          runAsUser: {{ .Values.security.runAsUser }}
+          {{- end }}
+      restartPolicy: Always
+      dnsPolicy: ClusterFirst
+      terminationGracePeriodSeconds: 30

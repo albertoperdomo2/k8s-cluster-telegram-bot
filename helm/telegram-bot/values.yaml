@@ -1,0 +1,71 @@
+image:
+  repository: ""  # REQUIRED: Set to your registry/image (e.g., quay.io/username/k8s-cluster-telegram-bot)
+  tag: latest
+  pullPolicy: Always
+
+replicaCount: 1
+
+serviceAccount:
+  create: true
+  name: telegram-bot
+
+namespace:
+  create: true
+  name: telegram-bot
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+health:
+  port: 8080
+  livenessProbe:
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 3
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+config:
+  logLevel: INFO
+  maxCommandHistory: 20
+  defaultLogLines: 50
+  maxOutputLength: 3500
+  enableAllNamespaces: true
+  enableExecCommands: true
+  enableScaling: true
+
+security:
+  runAsNonRoot: true
+  readOnlyRootFilesystem: false
+  allowPrivilegeEscalation: true
+
+service:
+  type: ClusterIP
+  port: 8080
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+networkPolicy:
+  enabled: false
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+secrets:
+  botToken: ""
+  authorizedUsers: ""
