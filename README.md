@@ -5,12 +5,14 @@ A Telegram bot that provides interactive Kubernetes/OpenShift cluster management
 ## ✨ Features
 
 - **📦 Pod Management** - List pods, view logs, get details with interactive navigation
-- **🚀 Deployment Control** - Scale deployments with clickable buttons (0, 1, 2, 3, 5, 10 replicas)
+- **🚀 Resource Scaling** - Scale deployments and machinesets with unified command interface
 - **🌐 Resource Overview** - Services, nodes, namespaces with real-time status
 - **📊 Cluster Dashboard** - Interactive cluster overview with quick actions
 - **⚡ Async Execution** - Execute commands with notifications for long-running tasks
 - **📄 Manifest Management** - Apply YAML/JSON manifests with preview and confirmation
 - **📁 File Operations** - Copy files from pods with automatic type detection
+- **🔧 Machine Management** - List and scale machinesets up/down with safety confirmations
+- **📋 Resource Description** - Detailed information about pods, nodes, deployments, and machinesets
 - **🔒 Secure Access** - User authentication and RBAC integration
 - **🏥 Health Monitoring** - Built-in health checks and monitoring endpoints
 
@@ -59,10 +61,13 @@ oc get pods -n telegram-bot
 1. Find your bot on Telegram and send `/start`
 2. Try `/cluster` for interactive cluster overview
 3. Use `/pods` to explore pod management
-4. Try `/deployments` for scaling operations
-5. Upload YAML files with `/apply` for manifest deployment
-6. Use `/exec_notif` for async command execution
-7. Copy files from pods with `/cp`
+4. Try `/deployments` to list deployments
+5. Use `/scale` to scale deployments and machinesets
+6. Upload YAML files with `/apply` for manifest deployment
+7. Use `/exec_notif` for async command execution
+8. Copy files from pods with `/cp`
+9. List machinesets with `/machinesets`
+10. Get detailed resource information with `/describe`
 
 ## 📱 Available Commands
 
@@ -77,17 +82,43 @@ oc get pods -n telegram-bot
 | `/nodes` | Show cluster nodes |
 | `/namespaces` | List all namespaces |
 | `/logs <pod> [namespace] [lines]` | Get pod logs |
-| `/scale <deployment> <namespace> <replicas>` | Scale deployment |
+| `/scale <resource_type> <resource_name> <namespace> <replicas>` | Scale deployments and machinesets |
 | `/exec_notif <pod> <namespace> <command>` | Execute command asynchronously with notification |
 | `/apply` | Apply YAML/JSON manifests (upload file after command) |
 | `/cp <pod> <namespace> <file_path>` | Copy file from pod |
+| `/describe <type> <name> [namespace]` | Describe Kubernetes resources |
+| `/machinesets [namespace]` | List machinesets |
 | `/status` | Bot and cluster status |
+
+## 🎯 Scaling Examples
+
+The `/scale` command provides unified scaling for multiple resource types:
+
+### Deployment Scaling
+```bash
+# Scale a deployment to 3 replicas
+/scale deployment web-app default 3
+
+# Scale down to 1 replica
+/scale deployment api-service production 1
+```
+
+### Machineset Scaling
+```bash
+# Scale up worker nodes
+/scale machineset worker-nodes openshift-machine-api 5
+
+# Scale down (requires confirmation for 0)
+/scale machineset test-nodes openshift-machine-api 0
+```
+
+**⚠️ Note**: Scaling machinesets to 0 requires typing `CONFIRM` to proceed, as this terminates cluster nodes.
 
 ## 🔘 Interactive Features
 
 - **Namespace Navigation** - Click buttons to browse pods by namespace
 - **Pod Actions** - View logs and details directly from chat
-- **Deployment Scaling** - Scale with clickable buttons (0, 1, 2, 3, 5, 10)
+- **Resource Scaling** - Scale deployments and machinesets with command interface and safety confirmations
 - **Manifest Preview** - Review YAML/JSON before applying with confirmation
 - **Async Notifications** - Get notified when long-running commands complete
 - **File Type Detection** - Automatic handling of text, images, and binary files
@@ -148,6 +179,7 @@ The bot uses RBAC with minimal required permissions:
 - **Deployments**: get, list, watch, patch, scale
 - **Services**: get, list, watch
 - **Nodes/Namespaces**: get, list, watch
+- **Machinesets**: get, list, watch, patch, update (OpenShift)
 
 **Note**: `/exec` command requires additional OpenShift security permissions and may show permission errors in restricted environments.
 

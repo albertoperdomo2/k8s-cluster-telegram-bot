@@ -44,6 +44,8 @@ class CommandHandlers:
         application.add_handler(CommandHandler("services", self.services_command))
         application.add_handler(CommandHandler("nodes", self.nodes_command))
         application.add_handler(CommandHandler("namespaces", self.namespaces_command))
+        application.add_handler(CommandHandler("describe", self.describe_command))
+        application.add_handler(CommandHandler("machinesets", self.machinesets_command))
 
         # Cluster info
         application.add_handler(CommandHandler("cluster", self.cluster_command))
@@ -69,11 +71,13 @@ Welcome! I can help you manage your Kubernetes cluster.
 📄 /apply - Apply YAML manifests to cluster
 📥 /cp - Copy file from pod
 🚀 /deployments - List deployments
-⚖️ /scale - Scale deployments
+⚖️ /scale - Scale deployments and machinesets
 🌐 /services - List services
 🖥️ /nodes - List cluster nodes
 📁 /namespaces - List namespaces
 🏗️ /cluster - Cluster overview
+📋 /describe - Describe resources
+🔧 /machinesets - List machinesets
 
 Use /help for detailed command usage."""
         await update.message.reply_text(welcome_message, parse_mode="Markdown")
@@ -104,13 +108,15 @@ Use /help for detailed command usage."""
 
 **Deployment Management:**
 • `/deployments [namespace]` - List deployments
-• `/scale <deployment> <namespace> <replicas>` - Scale deployment
+• `/scale <resource_type> <resource_name> <namespace> <replicas>` - Scale deployments and machinesets
 
 **Cluster Resources:**
 • `/services [namespace]` - List services
 • `/nodes` - List cluster nodes
 • `/namespaces` - List all namespaces
 • `/cluster` - Cluster overview
+• `/describe <type> <name> [namespace]` - Describe resources
+• `/machinesets [namespace]` - List machinesets
 
 **Examples:**
 • `/pods default` - Pods in default namespace
@@ -118,7 +124,8 @@ Use /help for detailed command usage."""
 • `/exec\\_notif my-pod default sleep 30` - Long-running command with notification
 • `/apply` then upload deployment.yaml - Apply Kubernetes manifest
 • `/cp my-pod default /var/log/app.log` - Copy log file from pod
-• `/scale web-app default 3` - Scale web-app to 3 replicas
+• `/scale deployment web-app default 3` - Scale deployment to 3 replicas
+• `/scale machineset worker-set openshift-machine-api 2` - Scale machineset to 2 replicas
         """
         await update.message.reply_text(help_text, parse_mode="Markdown")
 
@@ -306,39 +313,98 @@ Use /help for detailed command usage."""
             await update.message.reply_text(f"❌ Error getting deployments: {str(e)}")
 
     async def scale_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /scale command."""
+        """Handle /scale command for deployments, machinesets, and other resources."""
         user_id = update.effective_user.id
         if not is_authorized(user_id, self.bot.authorized_users):
             await self.bot.unauthorized_handler(update, context)
             return
 
-        if len(context.args) < 3:
+        if len(context.args) < 4:
             await update.message.reply_text(
-                "Usage: `/scale <deployment> <namespace> <replicas>`",
+                "Usage: `/scale <resource_type> <resource_name> <namespace> <replicas>`\n\n"
+                "**Supported resource types:**\n"
+                "• `deployment` - Scale Kubernetes deployments\n"
+                "• `machineset` - Scale OpenShift machinesets\n\n"
+                "**Examples:**\n"
+                "• `/scale deployment web-app default 3` - Scale deployment to 3 replicas\n"
+                "• `/scale machineset worker-set openshift-machine-api 2` - Scale machineset to 2 replicas\n"
+                "• `/scale machineset my-machineset openshift-machine-api 0` - Scale down to 0\n\n"
+                "⚠️ **Warning:** Scaling machinesets affects cluster nodes!",
                 parse_mode="Markdown",
             )
             return
 
         try:
-            deployment_name = context.args[0]
-            namespace = context.args[1]
-            replicas = int(context.args[2])
+            resource_type = context.args[0].lower()
+            resource_name = context.args[1]
+            namespace = context.args[2]
+            replicas = int(context.args[3])
 
-            success = self.k8s_client.scale_deployment(
-                deployment_name, namespace, replicas
-            )
+            # Handle different resource types
+            if resource_type == "deployment":
+                success = self.k8s_client.scale_deployment(
+                    resource_name, namespace, replicas
+                )
+                if success:
+                    await update.message.reply_text(
+                        f"✅ Scaled deployment `{resource_name}` to {replicas} replicas",
+                        parse_mode="Markdown",
+                    )
+                else:
+                    await update.message.reply_text("❌ Failed to scale deployment")
 
-            if success:
+            elif resource_type == "machineset":
+                # Show confirmation for destructive operations (scaling to 0)
+                if replicas == 0:
+                    await update.message.reply_text(
+                        f"⚠️ **Confirm Scale Down to 0**\n\n"
+                        f"🔧 **MachineSet:** `{resource_name}`\n"
+                        f"📍 **Namespace:** `{namespace}`\n"
+                        f"📊 **Target Replicas:** {replicas}\n\n"
+                        f"This will **terminate all nodes** in this machineset!\n\n"
+                        f"Reply with `CONFIRM` to proceed or anything else to cancel.",
+                        parse_mode="Markdown",
+                    )
+
+                    # Store the pending operation for confirmation
+                    if not hasattr(self.bot, "pending_operations"):
+                        self.bot.pending_operations = {}
+                    self.bot.pending_operations[user_id] = {
+                        "operation": "scale_machineset",
+                        "resource_name": resource_name,
+                        "namespace": namespace,
+                        "replicas": replicas,
+                    }
+                    return
+
+                success = self.k8s_client.scale_machineset(
+                    resource_name, namespace, replicas
+                )
+                if success:
+                    await update.message.reply_text(
+                        f"✅ Scaled machineset `{resource_name}` to {replicas} replicas",
+                        parse_mode="Markdown",
+                    )
+                else:
+                    await update.message.reply_text("❌ Failed to scale machineset")
+
+            else:
                 await update.message.reply_text(
-                    f"✅ Scaled deployment `{deployment_name}` to {replicas} replicas",
+                    f"❌ Unsupported resource type: `{resource_type}`\n\n"
+                    f"Supported types: deployment, machineset",
                     parse_mode="Markdown",
                 )
-            else:
-                await update.message.reply_text("❌ Failed to scale deployment")
 
+        except ValueError as e:
+            await update.message.reply_text(
+                f"❌ Invalid replicas value. Please provide a valid number.",
+                parse_mode="Markdown",
+            )
         except Exception as e:
             logger.error(f"Error in scale command: {e}")
-            await update.message.reply_text(f"❌ Error scaling deployment: {str(e)}")
+            await update.message.reply_text(
+                f"❌ Error scaling {resource_type}: {str(e)}"
+            )
 
     async def services_command(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -894,3 +960,91 @@ Use /help for detailed command usage."""
         image_extensions = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"}
         file_ext = os.path.splitext(filename.lower())[1]
         return file_ext in image_extensions
+
+    async def describe_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
+        """Handle /describe command for Kubernetes resources."""
+        user_id = update.effective_user.id
+        if not is_authorized(user_id, self.bot.authorized_users):
+            await self.bot.unauthorized_handler(update, context)
+            return
+
+        if len(context.args) < 2:
+            await update.message.reply_text(
+                "Usage: `/describe <resource_type> <resource_name> [namespace]`\n\n"
+                "**Examples:**\n"
+                "• `/describe pod my-pod default`\n"
+                "• `/describe node worker-node-1`\n"
+                "• `/describe deployment web-app production`\n"
+                "• `/describe machineset my-machineset openshift-machine-api`\n\n"
+                "**Supported resource types:**\n"
+                "• pod, node, deployment, service, machineset",
+                parse_mode="Markdown",
+            )
+            return
+
+        try:
+            resource_type = context.args[0].lower()
+            resource_name = context.args[1]
+            namespace = context.args[2] if len(context.args) > 2 else "default"
+
+            description = self.k8s_client.describe_resource(
+                resource_type, resource_name, namespace
+            )
+
+            # Truncate if too long for Telegram
+            max_length = 4000
+            if len(description) > max_length:
+                description = description[:max_length] + "\n\n... (truncated)"
+
+            message = f"📋 **Describe {resource_type}/{resource_name}**\n```\n{description}\n```"
+            await update.message.reply_text(message, parse_mode="Markdown")
+
+        except Exception as e:
+            logger.error(f"Error in describe command: {e}")
+            await update.message.reply_text(f"❌ Error describing resource: {str(e)}")
+
+    async def machinesets_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
+        """Handle /machinesets command."""
+        user_id = update.effective_user.id
+        if not is_authorized(user_id, self.bot.authorized_users):
+            await self.bot.unauthorized_handler(update, context)
+            return
+
+        try:
+            namespace = context.args[0] if context.args else "openshift-machine-api"
+
+            machinesets = self.k8s_client.get_machinesets(namespace)
+
+            if not machinesets:
+                await update.message.reply_text(
+                    f"No machinesets found in namespace `{namespace}`.",
+                    parse_mode="Markdown",
+                )
+                return
+
+            message = f"🔧 **Machinesets** in `{namespace}`\n\n"
+
+            for ms in machinesets:
+                desired = ms.get("desired_replicas", 0)
+                current = ms.get("current_replicas", 0)
+                ready = ms.get("ready_replicas", 0)
+
+                status_emoji = "✅" if ready == desired and current == desired else "⚠️"
+                message += f"{status_emoji} `{ms['name']}`\n"
+                message += (
+                    f"   📊 {ready}/{current}/{desired} (ready/current/desired)\n"
+                )
+
+                if ms.get("instance_type"):
+                    message += f"   🖥️ {ms['instance_type']}\n"
+                message += "\n"
+
+            await update.message.reply_text(message, parse_mode="Markdown")
+
+        except Exception as e:
+            logger.error(f"Error in machinesets command: {e}")
+            await update.message.reply_text(f"❌ Error getting machinesets: {str(e)}")

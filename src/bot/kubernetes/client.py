@@ -25,6 +25,7 @@ class KubernetesClient:
 
             self.v1 = client.CoreV1Api()
             self.apps_v1 = client.AppsV1Api()
+            self.custom_objects_api = client.CustomObjectsApi()
             logger.info("Kubernetes client initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize Kubernetes client: {e}")
@@ -416,4 +417,241 @@ class KubernetesClient:
 
         except Exception as e:
             logger.error(f"Error copying file from pod {pod_name} using cat: {e}")
+            raise
+
+    def describe_resource(
+        self, resource_type: str, resource_name: str, namespace: str = None
+    ) -> str:
+        """Describe a Kubernetes resource."""
+        try:
+            if resource_type == "pod":
+                if not namespace:
+                    namespace = "default"
+                pod = self.v1.read_namespaced_pod(
+                    name=resource_name, namespace=namespace
+                )
+                return self._format_pod_description(pod)
+
+            elif resource_type == "node":
+                node = self.v1.read_node(name=resource_name)
+                return self._format_node_description(node)
+
+            elif resource_type == "deployment":
+                if not namespace:
+                    namespace = "default"
+                deployment = self.apps_v1.read_namespaced_deployment(
+                    name=resource_name, namespace=namespace
+                )
+                return self._format_deployment_description(deployment)
+
+            elif resource_type == "service":
+                if not namespace:
+                    namespace = "default"
+                service = self.v1.read_namespaced_service(
+                    name=resource_name, namespace=namespace
+                )
+                return self._format_service_description(service)
+
+            elif resource_type == "machineset":
+                if not namespace:
+                    namespace = "openshift-machine-api"
+                machineset = self.custom_objects_api.get_namespaced_custom_object(
+                    group="machine.openshift.io",
+                    version="v1beta1",
+                    namespace=namespace,
+                    plural="machinesets",
+                    name=resource_name,
+                )
+                return self._format_machineset_description(machineset)
+
+            else:
+                raise ValueError(f"Unsupported resource type: {resource_type}")
+
+        except ApiException as e:
+            if e.status == 404:
+                raise Exception(f"{resource_type.title()} '{resource_name}' not found")
+            else:
+                raise Exception(f"API error: {e.reason}")
+        except Exception as e:
+            logger.error(f"Error describing {resource_type} {resource_name}: {e}")
+            raise
+
+    def scale_machineset(
+        self, machineset_name: str, namespace: str, replicas: int
+    ) -> bool:
+        """Scale a machineset to the specified number of replicas."""
+        try:
+            # Get current machineset
+            machineset = self.custom_objects_api.get_namespaced_custom_object(
+                group="machine.openshift.io",
+                version="v1beta1",
+                namespace=namespace,
+                plural="machinesets",
+                name=machineset_name,
+            )
+
+            # Update replicas
+            machineset["spec"]["replicas"] = replicas
+
+            # Patch the machineset
+            self.custom_objects_api.patch_namespaced_custom_object(
+                group="machine.openshift.io",
+                version="v1beta1",
+                namespace=namespace,
+                plural="machinesets",
+                name=machineset_name,
+                body=machineset,
+            )
+
+            return True
+
+        except ApiException as e:
+            if e.status == 404:
+                raise Exception(
+                    f"MachineSet '{machineset_name}' not found in namespace '{namespace}'"
+                )
+            else:
+                raise Exception(f"API error: {e.reason}")
+        except Exception as e:
+            logger.error(f"Error scaling machineset {machineset_name}: {e}")
+            raise
+
+    def _format_pod_description(self, pod) -> str:
+        """Format pod description."""
+        lines = []
+        lines.append(f"Name: {pod.metadata.name}")
+        lines.append(f"Namespace: {pod.metadata.namespace}")
+        lines.append(f"Status: {pod.status.phase}")
+        lines.append(f"IP: {pod.status.pod_ip or 'None'}")
+        lines.append(f"Node: {pod.spec.node_name or 'Not assigned'}")
+
+        if pod.status.container_statuses:
+            lines.append("\nContainers:")
+            for container in pod.status.container_statuses:
+                lines.append(f"  {container.name}: {container.state}")
+
+        return "\n".join(lines)
+
+    def _format_node_description(self, node) -> str:
+        """Format node description."""
+        lines = []
+        lines.append(f"Name: {node.metadata.name}")
+
+        # Node conditions
+        if node.status.conditions:
+            ready_condition = next(
+                (c for c in node.status.conditions if c.type == "Ready"), None
+            )
+            if ready_condition:
+                lines.append(f"Ready: {ready_condition.status}")
+
+        # Node info
+        if node.status.node_info:
+            info = node.status.node_info
+            lines.append(f"OS: {info.os_image}")
+            lines.append(f"Kernel: {info.kernel_version}")
+            lines.append(f"Container Runtime: {info.container_runtime_version}")
+
+        # Capacity
+        if node.status.capacity:
+            lines.append("\nCapacity:")
+            for resource, quantity in node.status.capacity.items():
+                lines.append(f"  {resource}: {quantity}")
+
+        return "\n".join(lines)
+
+    def _format_deployment_description(self, deployment) -> str:
+        """Format deployment description."""
+        lines = []
+        lines.append(f"Name: {deployment.metadata.name}")
+        lines.append(f"Namespace: {deployment.metadata.namespace}")
+        lines.append(
+            f"Replicas: {deployment.status.ready_replicas or 0}/{deployment.spec.replicas or 0}"
+        )
+        lines.append(f"Strategy: {deployment.spec.strategy.type}")
+
+        if deployment.spec.selector:
+            lines.append(f"Selector: {deployment.spec.selector.match_labels}")
+
+        return "\n".join(lines)
+
+    def _format_service_description(self, service) -> str:
+        """Format service description."""
+        lines = []
+        lines.append(f"Name: {service.metadata.name}")
+        lines.append(f"Namespace: {service.metadata.namespace}")
+        lines.append(f"Type: {service.spec.type}")
+        lines.append(f"Cluster IP: {service.spec.cluster_ip}")
+
+        if service.spec.ports:
+            lines.append("Ports:")
+            for port in service.spec.ports:
+                lines.append(f"  {port.port}/{port.protocol} -> {port.target_port}")
+
+        return "\n".join(lines)
+
+    def _format_machineset_description(self, machineset) -> str:
+        """Format machineset description."""
+        lines = []
+        lines.append(f"Name: {machineset['metadata']['name']}")
+        lines.append(f"Namespace: {machineset['metadata']['namespace']}")
+
+        spec = machineset.get("spec", {})
+        status = machineset.get("status", {})
+
+        lines.append(f"Desired Replicas: {spec.get('replicas', 0)}")
+        lines.append(f"Current Replicas: {status.get('replicas', 0)}")
+        lines.append(f"Ready Replicas: {status.get('readyReplicas', 0)}")
+
+        # Machine template info
+        template = spec.get("template", {}).get("spec", {})
+        if template:
+            lines.append("\nMachine Template:")
+            provider_spec = template.get("providerSpec", {}).get("value", {})
+            if provider_spec.get("instanceType"):
+                lines.append(f"  Instance Type: {provider_spec['instanceType']}")
+            if provider_spec.get("region"):
+                lines.append(f"  Region: {provider_spec['region']}")
+
+        return "\n".join(lines)
+
+    def get_machinesets(
+        self, namespace: str = "openshift-machine-api"
+    ) -> List[Dict[str, Any]]:
+        """Get list of machinesets in namespace."""
+        try:
+            machinesets = self.custom_objects_api.list_namespaced_custom_object(
+                group="machine.openshift.io",
+                version="v1beta1",
+                namespace=namespace,
+                plural="machinesets",
+            )
+
+            machineset_list = []
+            for ms in machinesets.get("items", []):
+                spec = ms.get("spec", {})
+                status = ms.get("status", {})
+
+                # Extract instance type from provider spec
+                template = spec.get("template", {}).get("spec", {})
+                provider_spec = template.get("providerSpec", {}).get("value", {})
+                instance_type = provider_spec.get("instanceType", "Unknown")
+
+                machineset_info = {
+                    "name": ms["metadata"]["name"],
+                    "namespace": ms["metadata"]["namespace"],
+                    "desired_replicas": spec.get("replicas", 0),
+                    "current_replicas": status.get("replicas", 0),
+                    "ready_replicas": status.get("readyReplicas", 0),
+                    "instance_type": instance_type,
+                }
+                machineset_list.append(machineset_info)
+
+            return machineset_list
+
+        except ApiException as e:
+            logger.error(f"Error getting machinesets: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Error getting machinesets: {e}")
             raise

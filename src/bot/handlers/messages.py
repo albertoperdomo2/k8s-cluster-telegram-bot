@@ -31,6 +31,11 @@ class MessageHandlers:
         )
         application.add_handler(MessageHandler(yaml_filter, self.handle_yaml_upload))
 
+        # Text message handler for confirmations
+        application.add_handler(
+            MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text_message)
+        )
+
     async def handle_yaml_upload(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ):
@@ -193,3 +198,61 @@ class MessageHandlers:
         """Remove pending apply operation."""
         if apply_id in self.pending_applies:
             del self.pending_applies[apply_id]
+
+    async def handle_text_message(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
+        """Handle text messages for confirmations."""
+        user_id = update.effective_user.id
+        if not is_authorized(user_id, self.bot.authorized_users):
+            await self.bot.unauthorized_handler(update, context)
+            return
+
+        text = update.message.text.strip().upper()
+
+        # Check for pending operations
+        if (
+            hasattr(self.bot, "pending_operations")
+            and user_id in self.bot.pending_operations
+        ):
+            pending_op = self.bot.pending_operations[user_id]
+
+            if pending_op["operation"] == "scale_machineset":
+                if text == "CONFIRM":
+                    # Execute the scale operation
+                    try:
+                        success = self.k8s_client.scale_machineset(
+                            pending_op["resource_name"],
+                            pending_op["namespace"],
+                            pending_op["replicas"],
+                        )
+
+                        if success:
+                            await update.message.reply_text(
+                                f"✅ **Scale Confirmed**\n\n"
+                                f"MachineSet `{pending_op['resource_name']}` has been scaled to {pending_op['replicas']} replicas.\n\n"
+                                f"⚠️ Nodes will be terminated and pods will be rescheduled.",
+                                parse_mode="Markdown",
+                            )
+                        else:
+                            await update.message.reply_text(
+                                "❌ Failed to scale machineset"
+                            )
+
+                    except Exception as e:
+                        logger.error(f"Error in confirmed scale operation: {e}")
+                        await update.message.reply_text(
+                            f"❌ Error scaling machineset: {str(e)}"
+                        )
+
+                    # Clear the pending operation
+                    del self.bot.pending_operations[user_id]
+
+                else:
+                    await update.message.reply_text(
+                        f"❌ **Scale Cancelled**\n\n"
+                        f"MachineSet `{pending_op['resource_name']}` was not modified.",
+                        parse_mode="Markdown",
+                    )
+                    # Clear the pending operation
+                    del self.bot.pending_operations[user_id]

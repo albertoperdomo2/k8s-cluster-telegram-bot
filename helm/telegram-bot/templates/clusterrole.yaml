@@ -49,3 +49,7 @@ rules:
 - apiGroups: [""]
   resources: ["pods/status"]
   verbs: ["get"]
+# MachineSet operations (OpenShift)
+- apiGroups: ["machine.openshift.io"]
+  resources: ["machinesets"]
+  verbs: ["get", "list", "watch", "patch", "update"]
